@@ -1,4 +1,3 @@
-import React from 'react';
 import { Crown, Code, Search, Compass, ClipboardList, PenTool, Lightbulb, Palette } from 'lucide-react';
 import { useLiff } from '../components/layout/LiffProvider';
 
