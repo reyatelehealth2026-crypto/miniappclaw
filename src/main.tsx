@@ -1,13 +1,18 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import './index.css'
-import { LiffProvider } from './components/layout/LiffProvider'
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { HashRouter } from 'react-router-dom';
+import { LiffProvider } from './components/layout/LiffProvider';
+import App from './App.tsx';
+import './index.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
+// LiffProvider gates rendering until LIFF init completes,
+// so HashRouter won't mount (and change the URL hash) during init.
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
     <LiffProvider>
-      <App />
+      <HashRouter>
+        <App />
+      </HashRouter>
     </LiffProvider>
-  </React.StrictMode>,
-)
+  </StrictMode>,
+);

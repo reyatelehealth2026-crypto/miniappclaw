@@ -1,15 +1,14 @@
-import { useState } from 'react'
-import AgentSelection from './pages/AgentSelection'
-import ChatSession from './pages/ChatSession'
+import { Routes, Route } from 'react-router-dom';
+import AgentSelection from './pages/AgentSelection';
+import ChatSession from './pages/ChatSession';
 
 function App() {
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-
-  if (selectedAgent) {
-    return <ChatSession agentId={selectedAgent} onBack={() => setSelectedAgent(null)} />;
-  }
-
-  return <AgentSelection onSelectAgent={setSelectedAgent} />
+  return (
+    <Routes>
+      <Route path="/" element={<AgentSelection />} />
+      <Route path="/chat/:agentId" element={<ChatSession />} />
+    </Routes>
+  );
 }
 
-export default App
+export default App;
