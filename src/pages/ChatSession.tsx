@@ -1,22 +1,18 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Plus, Mic, Share2, MessageSquare, QrCode, X, Link2 } from 'lucide-react';
+import { ArrowLeft, Send, Plus, Share2, MessageSquare, QrCode, X, Link2, Trash2, Wifi, WifiOff } from 'lucide-react';
 import { getAgent } from '../config/agents';
 import { useLiff } from '../components/layout/LiffProvider';
 import { useLiffActions } from '../hooks/useLiffActions';
-
-interface Message {
-  id: string;
-  text: string;
-  isOwn: boolean;
-}
+import { useChatStore } from '../hooks/useChatStore';
+import { useState } from 'react';
 
 export default function ChatSession() {
   const { agentId = '' } = useParams<{ agentId: string }>();
   const navigate = useNavigate();
-  const { context, environment } = useLiff();
-  const { shareAgentResponse, sendToChat, scanQrCode, closeLiff, getPermanentLink, isAvailable } =
+  const { profile, accessToken, miniApp } = useLiff();
+  const { shareAgentResponse, sendToChat, scanQrCode, closeLiff, getPermanentLink } =
     useLiffActions();
 
   const agent = getAgent(agentId);
@@ -24,74 +20,89 @@ export default function ChatSession() {
   const agentHeaderBg = agent?.headerBg ?? 'bg-gray-500';
   const agentHexColor = agent?.hexColor ?? '#888888';
 
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', text: `Hello! I am ${agentName}. How can I assist you today?`, isOwn: false },
-  ]);
-  // Read QR content from hash query param at mount time (avoids setState-in-effect)
-  const [input, setInput] = useState(() => {
-    const hashQuery = window.location.hash.split('?')[1];
-    if (!hashQuery) return '';
-    const params = new URLSearchParams(hashQuery);
-    const qrContent = params.get('q');
-    if (qrContent) {
-      // Clean up the URL so the param doesn't persist on reload
-      queueMicrotask(() => { window.location.hash = `/chat/${agentId}`; });
-      return qrContent;
-    }
-    return '';
-  });
+  // ── Chat store (real WebSocket connection) ─────────────────────────────
+  const {
+    messages,
+    isConnected,
+    isTyping,
+    quickActions,
+    greeting,
+    error: chatError,
+    connect,
+    disconnect,
+    sendMessage,
+    clearChat,
+    resetError,
+  } = useChatStore();
+
+  const [input, setInput] = useState('');
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [sharingId, setSharingId] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── Connect to WebSocket on mount ──────────────────────────────────────
+  useEffect(() => {
+    connect(agentId, profile?.userId ?? null, accessToken);
+    return () => {
+      disconnect();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId, profile?.userId, accessToken]);
+
+  // ── Handle QR content from URL params ──────────────────────────────────
+  useEffect(() => {
+    const hashQuery = window.location.hash.split('?')[1];
+    if (!hashQuery) return;
+    const params = new URLSearchParams(hashQuery);
+    const qrContent = params.get('q');
+    if (qrContent) {
+      setInput(qrContent);
+      window.location.hash = `/chat/${agentId}`;
+    }
+  }, [agentId]);
 
   // ── Auto-scroll to latest message ────────────────────────────────────────
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isTyping]);
 
   // ── Send message ─────────────────────────────────────────────────────────
   const handleSend = (e: FormEvent) => {
     e.preventDefault();
-    if (!input.trim()) return;
-
-    const userMsg: Message = { id: Date.now().toString(), text: input, isOwn: true };
-    setMessages(prev => [...prev, userMsg]);
+    if (!input.trim() || !isConnected) return;
+    sendMessage(input);
     setInput('');
-
-    // Mock agent reply (will be replaced with real backend call)
-    setTimeout(() => {
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          text: `I received: "${userMsg.text}". (Mock reply from ${agentName})`,
-          isOwn: false,
-        },
-      ]);
-    }, 1000);
+    inputRef.current?.focus();
   };
 
-  // ── Share agent response via shareTargetPicker ───────────────────────────
-  const handleShare = async (msg: Message) => {
-    setSharingId(msg.id);
-    await shareAgentResponse(agentName, agentHexColor, msg.text);
+  // ── Quick action ─────────────────────────────────────────────────────────
+  const handleQuickAction = (action: string) => {
+    if (!isConnected) return;
+    sendMessage(action);
+  };
+
+  // ── Share agent response via shareTargetPicker (Mini App only) ──────────
+  const handleShare = async (msgId: string, text: string) => {
+    setSharingId(msgId);
+    await shareAgentResponse(agentName, agentHexColor, text);
     setSharingId(null);
   };
 
-  // ── Send message directly to current LINE chat ───────────────────────────
-  const handleSendToChat = async (msg: Message) => {
-    await sendToChat(`[${agentName}]\n${msg.text}`);
+  // ── Send message directly to current LINE chat (Mini App only) ─────────
+  const handleSendToChat = async (text: string) => {
+    await sendToChat(`[${agentName}]\n${text}`);
   };
 
-  // ── QR scan from plus menu ───────────────────────────────────────────────
+  // ── QR scan from plus menu (Mini App only) ─────────────────────────────
   const handleScanQr = async () => {
     setShowPlusMenu(false);
     const result = await scanQrCode();
     if (result) setInput(result);
   };
 
-  // ── Copy permanent link to this agent's chat ─────────────────────────────
+  // ── Copy permanent link ────────────────────────────────────────────────
   const handleCopyLink = async () => {
     setShowPlusMenu(false);
     const link = await getPermanentLink(`/chat/${agentId}`);
@@ -100,19 +111,19 @@ export default function ChatSession() {
         await navigator.clipboard.writeText(link);
         setLinkCopied(true);
         setTimeout(() => setLinkCopied(false), 2000);
-      } catch {
-        /* clipboard may not be available */
-      }
+      } catch { /* clipboard may not be available */ }
     }
   };
 
   // ── Feature availability flags ───────────────────────────────────────────
-  const isInChatContext =
-    context?.type === 'utou' || context?.type === 'group' || context?.type === 'room';
-  const canShare = isAvailable('shareTargetPicker');
-  const canSend = isAvailable('sendMessages') && isInChatContext;
-  const canScan = isAvailable('scanCodeV2');
-  const isInLine = environment?.isInClient ?? false;
+  const isMiniApp = miniApp?.isMiniApp ?? false;
+  const isInChatContext = miniApp?.launchContext === 'utou' || miniApp?.launchContext === 'group' || miniApp?.launchContext === 'room';
+  const canShare = miniApp?.canShareTargetPicker ?? false;
+  const canSend = (miniApp?.canSendMessages ?? false) && isInChatContext;
+  const canScan = miniApp?.canScanCode ?? false;
+
+  // Dynamic quick actions from server, fallback to agent config
+  const activeQuickActions = quickActions.length > 0 ? quickActions : agent?.quickActions ?? [];
 
   return (
     <div className="flex flex-col h-screen bg-[#F4F5F6]">
@@ -126,58 +137,138 @@ export default function ChatSession() {
             <div
               className={`w-8 h-8 rounded-full ${agentHeaderBg} flex items-center justify-center text-white font-bold text-xs`}
             >
-              {agentName.charAt(0)}
+              {agent ? (() => { const Icon = agent.icon; return <Icon size={16} />; })() : agentName.charAt(0)}
             </div>
             <div className="ml-3">
               <h2 className="font-semibold text-gray-900 text-sm">{agent?.name ?? agentId}</h2>
-              <p className="text-xs text-green-500">Online</p>
+              <div className="flex items-center gap-1">
+                {isConnected ? (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    <p className="text-xs text-green-500">เชื่อมต่อแล้ว</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                    <p className="text-xs text-gray-400">กำลังเชื่อมต่อ...</p>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Close LIFF window (only meaningful inside LINE) */}
-        {isInLine && (
-          <button onClick={closeLiff} className="p-2 text-gray-400 hover:text-gray-600" title="Close">
-            <X size={20} />
+        <div className="flex items-center gap-1">
+          {/* Mini App badge */}
+          {isMiniApp && (
+            <span className="text-[10px] bg-[#06C755]/10 text-[#06C755] px-2 py-0.5 rounded-full font-medium">
+              Mini App
+            </span>
+          )}
+
+          {/* Clear chat */}
+          <button
+            onClick={clearChat}
+            className="p-2 text-gray-400 hover:text-red-500 transition-colors"
+            title="ล้างแชท"
+          >
+            <Trash2 size={18} />
           </button>
-        )}
+
+          {/* Close LIFF (Mini App only) */}
+          {isMiniApp && (
+            <button onClick={closeLiff} className="p-2 text-gray-400 hover:text-gray-600" title="ปิด">
+              <X size={20} />
+            </button>
+          )}
+        </div>
       </header>
+
+      {/* ── Connection status bar ──────────────────────────────────────── */}
+      {!isConnected && (
+        <div className="bg-amber-50 px-4 py-2 flex items-center justify-center gap-2 text-amber-700 text-xs">
+          <WifiOff size={14} />
+          <span>กำลังเชื่อมต่อกับเซิร์ฟเวอร์...</span>
+        </div>
+      )}
+
+      {/* ── Error banner ──────────────────────────────────────────────── */}
+      {chatError && (
+        <div className="bg-red-50 px-4 py-2 flex items-center justify-between text-red-700 text-xs">
+          <span>{chatError}</span>
+          <button onClick={resetError} className="text-red-500 font-medium ml-2">ปิด</button>
+        </div>
+      )}
 
       {/* ── Messages ────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
+        {/* Greeting (always shown at top) */}
+        {greeting && messages.length === 0 && (
+          <div className="flex w-full justify-start">
+            <div className="flex flex-col max-w-[80%]">
+              <div className="px-4 py-2.5 rounded-2xl bg-white text-gray-900 shadow-sm rounded-tl-sm">
+                <p className="text-[15px] leading-relaxed">{greeting}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
         {messages.map(msg => (
-          <div key={msg.id} className={`flex w-full ${msg.isOwn ? 'justify-end' : 'justify-start'}`}>
-            <div className="flex flex-col max-w-[75%]">
+          <div key={msg.id} className={`flex w-full ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div className="flex flex-col max-w-[80%]">
               <div
                 className={`px-4 py-2.5 rounded-2xl ${
-                  msg.isOwn
+                  msg.role === 'user'
                     ? 'bg-[#06C755] text-white rounded-tr-sm'
                     : 'bg-white text-gray-900 shadow-sm rounded-tl-sm'
                 }`}
               >
-                <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>
+                <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>
               </div>
 
-              {/* Share / Send-to-chat actions on agent messages */}
-              {!msg.isOwn && (canShare || canSend) && (
+              {/* Message status for user messages */}
+              {msg.role === 'user' && (
+                <div className="flex justify-end mt-0.5 mr-1">
+                  <span className="text-[10px] text-gray-400">
+                    {msg.status === 'sending' && '⏳ กำลังส่ง...'}
+                    {msg.status === 'sent' && '✓ ส่งแล้ว'}
+                    {msg.status === 'done' && '✓✓'}
+                    {msg.status === 'error' && '❌ ส่งไม่สำเร็จ'}
+                  </span>
+                </div>
+              )}
+
+              {/* Streaming indicator */}
+              {msg.role === 'assistant' && msg.status === 'streaming' && (
+                <div className="flex items-center gap-1 mt-1 ml-1">
+                  <div className="flex gap-0.5">
+                    <div className="w-1 h-1 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1 h-1 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-1 h-1 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                </div>
+              )}
+
+              {/* Share / Send-to-chat actions (Mini App features on agent messages) */}
+              {msg.role === 'assistant' && msg.status === 'done' && (canShare || canSend) && (
                 <div className="flex items-center gap-1 mt-1 ml-1">
                   {canShare && (
                     <button
-                      onClick={() => handleShare(msg)}
+                      onClick={() => handleShare(msg.id, msg.text)}
                       disabled={sharingId === msg.id}
                       className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#06C755] px-2 py-1 rounded-full hover:bg-white transition-colors"
                     >
                       <Share2 size={12} />
-                      <span>{sharingId === msg.id ? 'Sharing...' : 'Share'}</span>
+                      <span>{sharingId === msg.id ? 'กำลังแชร์...' : 'แชร์'}</span>
                     </button>
                   )}
                   {canSend && (
                     <button
-                      onClick={() => handleSendToChat(msg)}
+                      onClick={() => handleSendToChat(msg.text)}
                       className="flex items-center gap-1 text-[11px] text-gray-400 hover:text-[#007AFF] px-2 py-1 rounded-full hover:bg-white transition-colors"
                     >
                       <MessageSquare size={12} />
-                      <span>Send to Chat</span>
+                      <span>ส่งไปแชท</span>
                     </button>
                   )}
                 </div>
@@ -185,22 +276,36 @@ export default function ChatSession() {
             </div>
           </div>
         ))}
+
+        {/* Typing indicator */}
+        {isTyping && !messages.some(m => m.status === 'streaming') && (
+          <div className="flex w-full justify-start">
+            <div className="px-4 py-3 rounded-2xl bg-white shadow-sm rounded-tl-sm">
+              <div className="flex gap-1">
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
       {/* ── Plus menu overlay ───────────────────────────────────────────── */}
       {showPlusMenu && (
         <>
-          {/* Backdrop */}
           <div className="fixed inset-0 z-10" onClick={() => setShowPlusMenu(false)} />
           <div className="absolute bottom-28 left-4 bg-white rounded-2xl shadow-lg border border-gray-100 p-2 z-20 min-w-[200px]">
+            {/* QR Scan — Mini App only */}
             {canScan && (
               <button
                 onClick={handleScanQr}
                 className="flex items-center gap-3 w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-xl"
               >
                 <QrCode size={18} className="text-gray-500" />
-                Scan QR Code
+                สแกน QR Code
               </button>
             )}
             <button
@@ -208,8 +313,13 @@ export default function ChatSession() {
               className="flex items-center gap-3 w-full px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 rounded-xl"
             >
               <Link2 size={18} className="text-gray-500" />
-              {linkCopied ? '✓ Link Copied!' : 'Copy Agent Link'}
+              {linkCopied ? '✓ คัดลอกลิงก์แล้ว!' : 'คัดลอกลิงก์ Agent'}
             </button>
+            {/* Connection status in menu */}
+            <div className="flex items-center gap-3 px-4 py-2 text-xs text-gray-400 border-t border-gray-50 mt-1">
+              {isConnected ? <Wifi size={14} className="text-green-500" /> : <WifiOff size={14} className="text-red-400" />}
+              <span>{isConnected ? 'เชื่อมต่อแล้ว' : 'ไม่ได้เชื่อมต่อ'}</span>
+            </div>
           </div>
         </>
       )}
@@ -218,11 +328,12 @@ export default function ChatSession() {
       <div className="bg-white border-t p-3 pb-[calc(env(safe-area-inset-bottom)+12px)]">
         {/* Quick actions */}
         <div className="flex space-x-2 overflow-x-auto pb-3 scrollbar-hide">
-          {['Summarize', 'Explain code', 'Fix errors'].map(action => (
+          {activeQuickActions.map(action => (
             <button
               key={action}
-              onClick={() => setInput(action)}
-              className="whitespace-nowrap px-4 py-1.5 bg-gray-100 rounded-full text-xs text-gray-700 hover:bg-gray-200 font-medium"
+              onClick={() => handleQuickAction(action)}
+              disabled={!isConnected}
+              className="whitespace-nowrap px-4 py-1.5 bg-gray-100 rounded-full text-xs text-gray-700 hover:bg-gray-200 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {action}
             </button>
@@ -240,23 +351,22 @@ export default function ChatSession() {
 
           <div className="flex-1 bg-gray-100 rounded-2xl flex items-center px-4 py-1">
             <input
+              ref={inputRef}
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
               onFocus={() => setShowPlusMenu(false)}
-              placeholder="Type a message..."
-              className="flex-1 bg-transparent py-2 focus:outline-none text-[15px]"
+              placeholder={isConnected ? 'พิมพ์ข้อความ...' : 'กำลังเชื่อมต่อ...'}
+              disabled={!isConnected}
+              className="flex-1 bg-transparent py-2 focus:outline-none text-[15px] disabled:opacity-50"
             />
-            <button type="button" className="text-gray-400 hover:text-gray-600 ml-2">
-              <Mic size={20} />
-            </button>
           </div>
 
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || !isConnected}
             className={`p-2.5 rounded-full mb-0.5 transition-colors ${
-              input.trim() ? 'bg-[#06C755] text-white' : 'bg-gray-200 text-gray-400'
+              input.trim() && isConnected ? 'bg-[#06C755] text-white' : 'bg-gray-200 text-gray-400'
             }`}
           >
             <Send size={20} className="ml-0.5" />
