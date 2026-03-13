@@ -85,6 +85,7 @@ const LiffContext = createContext<LiffState>(defaultState);
 
 export const LiffProvider = ({ children }: { children: ReactNode }) => {
   const [state, setState] = useState<LiffState>(defaultState);
+  const shouldCheckFriendship = import.meta.env.VITE_LIFF_CHECK_FRIENDSHIP === 'true';
 
   const checkApiAvailable = useCallback((api: string): boolean => {
     try {
@@ -147,11 +148,15 @@ export const LiffProvider = ({ children }: { children: ReactNode }) => {
 
         // ── Friendship check ───────────────────────────────────────────────
         let isFriend: boolean | null = null;
-        try {
-          const friendship = await liff.getFriendship();
-          isFriend = friendship.friendFlag;
-        } catch (err) {
-          console.warn('getFriendship failed:', err);
+        if (shouldCheckFriendship && liff.isLoggedIn()) {
+          try {
+            const friendship = await liff.getFriendship();
+            isFriend = friendship.friendFlag;
+          } catch (err) {
+            if (import.meta.env.DEV) {
+              console.info('Friendship status unavailable. Enable the friendship option in LIFF settings to use this feature.', err);
+            }
+          }
         }
 
         // ── Mini App capabilities detection ────────────────────────────────
@@ -195,7 +200,7 @@ export const LiffProvider = ({ children }: { children: ReactNode }) => {
     };
 
     initLiff();
-  }, [checkApiAvailable]);
+  }, [checkApiAvailable, shouldCheckFriendship]);
 
   // ── Loading / Error screens ──────────────────────────────────────────────
 

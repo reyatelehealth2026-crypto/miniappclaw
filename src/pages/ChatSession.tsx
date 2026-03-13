@@ -28,6 +28,8 @@ export default function ChatSession() {
     quickActions,
     greeting,
     error: chatError,
+    notice,
+    connectionMode,
     connect,
     disconnect,
     sendMessage,
@@ -142,7 +144,12 @@ export default function ChatSession() {
             <div className="ml-3">
               <h2 className="font-semibold text-gray-900 text-sm">{agent?.name ?? agentId}</h2>
               <div className="flex items-center gap-1">
-                {isConnected ? (
+                {connectionMode === 'mock' ? (
+                  <>
+                    <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    <p className="text-xs text-amber-500">โหมดตัวอย่าง</p>
+                  </>
+                ) : isConnected ? (
                   <>
                     <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                     <p className="text-xs text-green-500">เชื่อมต่อแล้ว</p>
@@ -185,10 +192,17 @@ export default function ChatSession() {
       </header>
 
       {/* ── Connection status bar ──────────────────────────────────────── */}
-      {!isConnected && (
+      {!isConnected && connectionMode !== 'mock' && (
         <div className="bg-amber-50 px-4 py-2 flex items-center justify-center gap-2 text-amber-700 text-xs">
           <WifiOff size={14} />
           <span>กำลังเชื่อมต่อกับเซิร์ฟเวอร์...</span>
+        </div>
+      )}
+
+      {notice && (
+        <div className="bg-blue-50 px-4 py-2 flex items-center justify-center gap-2 text-blue-700 text-xs">
+          <Wifi size={14} />
+          <span>{notice}</span>
         </div>
       )}
 
