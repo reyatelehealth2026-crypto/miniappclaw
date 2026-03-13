@@ -67,7 +67,7 @@ export function setupSocketHandlers(io: Server) {
       if (!text?.trim()) return;
 
       // Persist user message
-      let history = conversations.get(conversationKey) ?? [];
+      const history = conversations.get(conversationKey) ?? [];
       history.push({ role: 'user', content: text });
       conversations.set(conversationKey, history);
       await saveMessage(conversationKey, 'user', text);
